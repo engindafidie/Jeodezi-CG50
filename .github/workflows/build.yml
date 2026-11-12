@@ -1,0 +1,32 @@
+name: Casio CG50 G3A Derleyici
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: tari/prizmsdk:latest
+    steps:
+      - name: Dosyalari Cek
+        uses: actions/checkout@v4
+
+      - name: G3A Dosyasini Derle
+        run: |
+          mkdir -p src build
+          cp main.c src/main.c
+          cat << 'EOF' > Makefile
+          APPNAME = JEODEZI
+          BUILDDIR = build
+          SRCDIR = src
+          include $(FXCGSDK)/toolchain/prizm.bd
+          EOF
+          make
+
+      - name: Hazir G3A Dosyasini Paketle
+        uses: actions/upload-artifact@v4
+        with:
+          name: JEODEZI_CG50_G3A
+          path: "*.g3a"
