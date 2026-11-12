@@ -14,30 +14,47 @@ jobs:
       - name: SH4 Derleyici ve PrizmSDK (libfxcg) Kurulumu
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-sh4-linux-gnu g++-sh4-linux-gnu binutils-sh4-linux-gnu build-essential git zlib1g-dev libpng-dev
+          sudo apt-get install -y gcc-sh4-linux-gnu g++-sh4-linux-gnu binutils-sh4-linux-gnu build-essential cmake git zlib1g-dev libpng-dev
           for f in /usr/bin/sh4-linux-gnu-*; do
             base=$(basename "$f" | sed 's/^sh4-linux-gnu-//')
             sudo ln -sf "$f" "/usr/local/bin/sh3eb-elf-$base"
             sudo ln -sf "$f" "/usr/local/bin/sh-elf-$base"
           done
           git clone --depth 1 https://github.com/Jonimoose/libfxcg.git /tmp/libfxcg
-          sed -i 's/-m3/-m4-nofpu -mb/g' /tmp/libfxcg/toolchain/prizm.bd || true
-          sed -i 's/-m4a-nofpu/-m4-nofpu -mb/g' /tmp/libfxcg/toolchain/prizm.bd || true
+          find /tmp/libfxcg -type f \( -name "Makefile*" -o -name "*.mk" \) -exec sed -i 's/-m3/-m4-nofpu -mb/g; s/-m4a-nofpu/-m4-nofpu -mb/g' {} +
           make -C /tmp/libfxcg
+
+          # mkg3a aracini derle (eger libfxcg icinde otomatik derlenmediyse)
+          if ! command -v mkg3a >/dev/null 2>&1 && [ ! -f /tmp/libfxcg/tools/mkg3a/mkg3a ]; then
+            git clone --depth 1 https://github.com/taricorp/mkg3a.git /tmp/mkg3a
+            cmake -B /tmp/mkg3a/build -S /tmp/mkg3a
+            make -C /tmp/mkg3a/build
+            sudo cp /tmp/mkg3a/build/src/mkg3a /usr/local/bin/mkg3a
+          elif [ -f /tmp/libfxcg/tools/mkg3a/mkg3a ]; then
+            sudo cp /tmp/libfxcg/tools/mkg3a/mkg3a /usr/local/bin/mkg3a
+          fi
 
       - name: G3A Dosyasini Derle
         run: |
-          mkdir -p build_app/src build_app/build
-          if [ -f "main.c" ]; then
-            cp main.c build_app/src/main.c
-          elif [ -f "jeodezi_g3a_main.c" ]; then
-            cp jeodezi_g3a_main.c build_app/src/main.c
+          SRC_FILE="main.c"
+          if [ ! -f "$SRC_FILE" ] && [ -f "jeodezi_g3a_main.c" ]; then
+            SRC_FILE="jeodezi_g3a_main.c"
           fi
-          printf "export FXCGSDK = /tmp/libfxcg\nAPPNAME = JEODEZI\nBUILDDIR = build\nSRCDIR = src\nCFLAGS_EXTRA = -fno-builtin -Wno-unused-function\ninclude \$(FXCGSDK)/toolchain/prizm.bd\n" > build_app/Makefile
-          sed -i 's/-lgcc//g' /tmp/libfxcg/toolchain/prizm.bd || true
-          sed -i 's/-lc//g' /tmp/libfxcg/toolchain/prizm.bd || true
-          make -C build_app
-          cp build_app/*.g3a .
+
+          # prizm.bd olmadan dogrudan derleme ve baglama
+          sh3eb-elf-gcc -c "$SRC_FILE" -o main.o \
+            -I/tmp/libfxcg/include \
+            -m4-nofpu -mb -Os -Wall -fno-builtin -ffunction-sections -fdata-sections
+
+          LDSCRIPT=$(find /tmp/libfxcg -name "prizm.x" | head -n 1)
+          CRT0=$(find /tmp/libfxcg -name "crt0.o" | head -n 1)
+          LIBPATH=$(dirname $(find /tmp/libfxcg -name "libfxcg.a" | head -n 1))
+
+          sh3eb-elf-gcc -T "$LDSCRIPT" -nostartfiles -nostdlib \
+            "$CRT0" main.o -L"$LIBPATH" -lfxcg -Wl,--gc-sections -o jeodezi.elf
+
+          sh3eb-elf-objcopy -O binary -R .comment -R .bss -S jeodezi.elf jeodezi.bin
+          mkg3a -n ":JEODEZI" jeodezi.bin JEODEZI.g3a
 
       - name: Hazir G3A Dosyasini Paketle
         uses: actions/upload-artifact@v4
