@@ -90,11 +90,11 @@ jobs:
             -mb -m4a-nofpu -mhitachi -Os -Wall \
             -ffunction-sections -fdata-sections
 
-          sh3eb-elf-gcc -mb -m4a-nofpu -nostartfiles \
+                   sh3eb-elf-gcc -mb -m4a-nofpu -nostdlib -nostartfiles \
             -Wl,-static -Wl,--gc-sections \
             -T"$LDSCRIPT" main.o -L"$LIBDIR" -lfxcg -lgcc \
-            -o jeodezi.elf
-
+            -o jeodezi.elf 
+            
           sh3eb-elf-objcopy -R .comment -R .bss -O binary jeodezi.elf jeodezi.bin
 
           mkg3a -n basic:JEODEZI -n internal:@JEODEZI jeodezi.bin JEODEZI.g3a
