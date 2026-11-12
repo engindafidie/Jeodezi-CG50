@@ -6,19 +6,42 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    container:
-      image: tari/prizmsdk:latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Dosyalari Cek
         uses: actions/checkout@v4
 
+      - name: SH4 Derleyici ve PrizmSDK (libfxcg) Kurulumu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-sh4-linux-gnu g++-sh4-linux-gnu binutils-sh4-linux-gnu build-essential git zlib1g-dev libpng-dev
+          for tool in gcc g++ ar ld objcopy objdump ranlib strip readelf; do
+            sudo ln -sf /usr/bin/sh4-linux-gnu-$tool /usr/local/bin/sh3eb-elf-$tool
+            sudo ln -sf /usr/bin/sh4-linux-gnu-$tool /usr/local/bin/sh-elf-$tool
+          done
+          git clone --depth 1 https://github.com/Jonimoose/libfxcg.git /tmp/libfxcg
+          sed -i 's/-m3/-m4-nofpu -mb/g' /tmp/libfxcg/toolchain/prizm.bd || true
+          make -C /tmp/libfxcg
+
       - name: G3A Dosyasini Derle
         run: |
-          mkdir -p src build
-          cp main.c src/main.c
-          printf "APPNAME = JEODEZI\nBUILDDIR = build\nSRCDIR = src\nLIBS = -lfxcg -lm -lc -lgcc\ninclude \$(FXCGSDK)/toolchain/prizm.bd\n" > Makefile
-          make
+          mkdir -p build_app/src build_app/build
+          if [ -f "main.c" ]; then
+            cp main.c build_app/src/main.c
+          elif [ -f "jeodezi_g3a_main.c" ]; then
+            cp jeodezi_g3a_main.c build_app/src/main.c
+          fi
+          cat << 'EOF' > build_app/Makefile
+          export FXCGSDK = /tmp/libfxcg
+          APPNAME = JEODEZI
+          BUILDDIR = build
+          SRCDIR = src
+          LIBS = -lfxcg -lm -lc -lgcc
+          include $(FXCGSDK)/toolchain/prizm.bd
+          EOF
+          sed -i 's/^          //' build_app/Makefile
+          make -C build_app
+          cp build_app/*.g3a .
 
       - name: Hazir G3A Dosyasini Paketle
         uses: actions/upload-artifact@v4
