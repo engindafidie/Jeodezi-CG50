@@ -22,17 +22,18 @@ jobs:
           sudo apt-get install -y build-essential cmake git wget texinfo flex bison \
             libgmp-dev libmpfr-dev libmpc-dev libpng-dev zlib1g-dev
 
-      - name: Toolchain Cache
+      - name: Toolchain Cache Geri Yukle
         id: cache-toolchain
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /opt/cross
           key: sh3eb-elf-binutils-${{ env.BINUTILS_VER }}-gcc-${{ env.GCC_VER }}
 
-      - name: sh3eb-elf Toolchain Derle (binutils + gcc)
+      - name: sh3eb-elf Toolchain Derle
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
-          sudo mkdir -p $CROSS_PREFIX && sudo chown $USER $CROSS_PREFIX
+          sudo mkdir -p $CROSS_PREFIX
+          sudo chown $USER $CROSS_PREFIX
           export PATH="$CROSS_PREFIX/bin:$PATH"
           cd /tmp
 
@@ -41,14 +42,16 @@ jobs:
           tar xf binutils-$BINUTILS_VER.tar.xz
           tar xf gcc-$GCC_VER.tar.xz
 
-          mkdir build-binutils && cd build-binutils
+          mkdir build-binutils
+          cd build-binutils
           ../binutils-$BINUTILS_VER/configure --target=sh3eb-elf --prefix=$CROSS_PREFIX \
             --disable-nls --disable-werror
           make -j$(nproc)
           make install
           cd /tmp
 
-          mkdir build-gcc && cd build-gcc
+          mkdir build-gcc
+          cd build-gcc
           ../gcc-$GCC_VER/configure --target=sh3eb-elf --prefix=$CROSS_PREFIX \
             --disable-nls --enable-languages=c --without-headers --with-newlib \
             --disable-shared --disable-threads --disable-libssp --disable-libgomp \
@@ -56,10 +59,17 @@ jobs:
           make -j$(nproc) all-gcc all-target-libgcc
           make install-gcc install-target-libgcc
 
+      - name: Toolchain Cache Kaydet
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /opt/cross
+          key: sh3eb-elf-binutils-${{ env.BINUTILS_VER }}-gcc-${{ env.GCC_VER }}
+
       - name: PATH Ayarla
         run: echo "$CROSS_PREFIX/bin" >> $GITHUB_PATH
 
-      - name: libfxcg (PrizmSDK) Derle
+      - name: libfxcg Derle
         run: |
           git clone --depth 1 https://github.com/Jonimoose/libfxcg.git /tmp/libfxcg
           make -C /tmp/libfxcg
@@ -85,16 +95,16 @@ jobs:
           echo "LDSCRIPT=$LDSCRIPT"
           echo "LIBDIR=$LIBDIR"
 
-          sh3eb-elf-gcc -c "$SRC_FILE" -o main.o \
-            -I$SDK/include \
-            -mb -m4a-nofpu -mhitachi -Os -Wall \
-            -ffunction-sections -fdata-sections
+          CFLAGS="-I$SDK/include -I. -include compat.h -mb -m4a-nofpu -mhitachi -Os -Wall -ffunction-sections -fdata-sections"
 
-                   sh3eb-elf-gcc -mb -m4a-nofpu -nostdlib -nostartfiles \
+          sh3eb-elf-gcc -c compat.c -o compat.o $CFLAGS
+          sh3eb-elf-gcc -c "$SRC_FILE" -o main.o $CFLAGS
+
+          sh3eb-elf-gcc -mb -m4a-nofpu -nostdlib -nostartfiles \
             -Wl,-static -Wl,--gc-sections \
-            -T"$LDSCRIPT" main.o -L"$LIBDIR" -lfxcg -lgcc \
-            -o jeodezi.elf 
-            
+            -T"$LDSCRIPT" main.o compat.o -L"$LIBDIR" -lfxcg -lgcc \
+            -o jeodezi.elf
+
           sh3eb-elf-objcopy -R .comment -R .bss -O binary jeodezi.elf jeodezi.bin
 
           mkg3a -n basic:JEODEZI -n internal:@JEODEZI jeodezi.bin JEODEZI.g3a
