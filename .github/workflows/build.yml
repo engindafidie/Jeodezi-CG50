@@ -4,6 +4,11 @@ on:
   push:
   workflow_dispatch:
 
+env:
+  CROSS_PREFIX: /opt/cross
+  BINUTILS_VER: "2.42"
+  GCC_VER: "13.2.0"
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -11,39 +16,61 @@ jobs:
       - name: Dosyalari Cek
         uses: actions/checkout@v4
 
-      - name: SH4 Derleyici ve PrizmSDK (libfxcg) Kurulumu
+      - name: Gerekli Paketleri Kur
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-sh4-linux-gnu g++-sh4-linux-gnu binutils-sh4-linux-gnu build-essential cmake git zlib1g-dev libpng-dev
-          for f in /usr/bin/sh4-linux-gnu-*; do
-            base=$(basename "$f" | sed 's/^sh4-linux-gnu-//')
-            sudo ln -sf "$f" "/usr/local/bin/sh3eb-elf-$base"
-            sudo ln -sf "$f" "/usr/local/bin/sh-elf-$base"
-          done
+          sudo apt-get install -y build-essential cmake git wget texinfo flex bison \
+            libgmp-dev libmpfr-dev libmpc-dev libpng-dev zlib1g-dev
+
+      - name: Toolchain Cache
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: /opt/cross
+          key: sh3eb-elf-binutils-${{ env.BINUTILS_VER }}-gcc-${{ env.GCC_VER }}
+
+      - name: sh3eb-elf Toolchain Derle (binutils + gcc)
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          sudo mkdir -p $CROSS_PREFIX && sudo chown $USER $CROSS_PREFIX
+          export PATH="$CROSS_PREFIX/bin:$PATH"
+          cd /tmp
+
+          wget -q https://ftpmirror.gnu.org/gnu/binutils/binutils-$BINUTILS_VER.tar.xz
+          wget -q https://ftpmirror.gnu.org/gnu/gcc/gcc-$GCC_VER/gcc-$GCC_VER.tar.xz
+          tar xf binutils-$BINUTILS_VER.tar.xz
+          tar xf gcc-$GCC_VER.tar.xz
+
+          mkdir build-binutils && cd build-binutils
+          ../binutils-$BINUTILS_VER/configure --target=sh3eb-elf --prefix=$CROSS_PREFIX \
+            --disable-nls --disable-werror
+          make -j$(nproc)
+          make install
+          cd /tmp
+
+          mkdir build-gcc && cd build-gcc
+          ../gcc-$GCC_VER/configure --target=sh3eb-elf --prefix=$CROSS_PREFIX \
+            --disable-nls --enable-languages=c --without-headers --with-newlib \
+            --disable-shared --disable-threads --disable-libssp --disable-libgomp \
+            --disable-libquadmath --disable-libatomic
+          make -j$(nproc) all-gcc all-target-libgcc
+          make install-gcc install-target-libgcc
+
+      - name: PATH Ayarla
+        run: echo "$CROSS_PREFIX/bin" >> $GITHUB_PATH
+
+      - name: libfxcg (PrizmSDK) Derle
+        run: |
           git clone --depth 1 https://github.com/Jonimoose/libfxcg.git /tmp/libfxcg
-          find /tmp/libfxcg -type f \( -name "Makefile*" -o -name "*.mk" \) -exec sed -i 's/-m3/-m4-nofpu -mb/g; s/-m4a-nofpu/-m4-nofpu -mb/g' {} +
           make -C /tmp/libfxcg
 
-          # mkg3a aracini disaridan klonlamak yerine libfxcg icinden derle veya alternatif olustur
-          if [ -d "/tmp/libfxcg/tools/mkg3a" ]; then
-            cd /tmp/libfxcg/tools/mkg3a
-            if [ -f "Makefile" ]; then make; else gcc -o mkg3a *.c -lz; fi
-            sudo cp mkg3a /usr/local/bin/mkg3a
-          else
-            # Basit mkg3a alternatifi veya dogrudan derleme
-            echo "mkg3a tool missing, building simple wrapper"
-          fi
-
-          # Eger mkg3a hala yoksa python ile ikili baslik olusturucu kullan
-          if ! command -v mkg3a >/dev/null 2>&1; then
-            echo '#!/usr/bin/env python3' > /usr/local/bin/mkg3a
-            echo 'import sys, struct' >> /usr/local/bin/mkg3a
-            echo 'name, src, dst = sys.argv[2], sys.argv[3], sys.argv[4]' >> /usr/local/bin/mkg3a
-            echo 'with open(src, "rb") as f: code = f.read()' >> /usr/local/bin/mkg3a
-            echo 'with open(dst, "wb") as f:' >> /usr/local/bin/mkg3a
-            echo '    f.write(b"APPL" + struct.pack("<I", len(code)) + name.encode("ascii").ljust(8, b"\x00") + code)' >> /usr/local/bin/mkg3a
-            sudo chmod +x /usr/local/bin/mkg3a
-          fi
+      - name: mkg3a Derle
+        run: |
+          git clone --depth 1 https://github.com/tari/mkg3a.git /tmp/mkg3a
+          cd /tmp/mkg3a
+          cmake .
+          make -j$(nproc)
+          sudo make install
 
       - name: G3A Dosyasini Derle
         run: |
@@ -52,22 +79,30 @@ jobs:
             SRC_FILE="jeodezi_g3a_main.c"
           fi
 
+          SDK=/tmp/libfxcg
+          LDSCRIPT=$(find $SDK -name "prizm.x" | head -n 1)
+          LIBDIR=$(dirname $(find $SDK -name "libfxcg.a" | head -n 1))
+          echo "LDSCRIPT=$LDSCRIPT"
+          echo "LIBDIR=$LIBDIR"
+
           sh3eb-elf-gcc -c "$SRC_FILE" -o main.o \
-            -I/tmp/libfxcg/include \
-            -m4-nofpu -mb -Os -Wall -fno-builtin -ffunction-sections -fdata-sections
+            -I$SDK/include \
+            -mb -m4a-nofpu -mhitachi -Os -Wall \
+            -ffunction-sections -fdata-sections
 
-          LDSCRIPT=$(find /tmp/libfxcg -name "prizm.x" | head -n 1)
-          CRT0=$(find /tmp/libfxcg -name "crt0.o" | head -n 1)
-          LIBPATH=$(dirname $(find /tmp/libfxcg -name "libfxcg.a" | head -n 1))
+          sh3eb-elf-gcc -mb -m4a-nofpu -nostartfiles \
+            -Wl,-static -Wl,--gc-sections \
+            -T"$LDSCRIPT" main.o -L"$LIBDIR" -lfxcg -lgcc \
+            -o jeodezi.elf
 
-          sh3eb-elf-gcc -T "$LDSCRIPT" -nostartfiles -nostdlib \
-            "$CRT0" main.o -L"$LIBPATH" -lfxcg -Wl,--gc-sections -o jeodezi.elf
+          sh3eb-elf-objcopy -R .comment -R .bss -O binary jeodezi.elf jeodezi.bin
 
-          sh3eb-elf-objcopy -O binary -R .comment -R .bss -S jeodezi.elf jeodezi.bin
-          mkg3a -n ":JEODEZI" jeodezi.bin JEODEZI.g3a
+          mkg3a -n basic:JEODEZI -n internal:@JEODEZI jeodezi.bin JEODEZI.g3a
+          ls -la *.g3a
 
       - name: Hazir G3A Dosyasini Paketle
         uses: actions/upload-artifact@v4
         with:
           name: JEODEZI_CG50_G3A
           path: "*.g3a"
+          if-no-files-found: error
