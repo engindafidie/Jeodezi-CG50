@@ -15,12 +15,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-sh4-linux-gnu g++-sh4-linux-gnu binutils-sh4-linux-gnu build-essential git zlib1g-dev libpng-dev
-          for tool in gcc g++ ar ld objcopy objdump ranlib strip readelf; do
-            sudo ln -sf /usr/bin/sh4-linux-gnu-$tool /usr/local/bin/sh3eb-elf-$tool
-            sudo ln -sf /usr/bin/sh4-linux-gnu-$tool /usr/local/bin/sh-elf-$tool
+          for f in /usr/bin/sh4-linux-gnu-*; do
+            base=$(basename "$f" | sed 's/^sh4-linux-gnu-//')
+            sudo ln -sf "$f" "/usr/local/bin/sh3eb-elf-$base"
+            sudo ln -sf "$f" "/usr/local/bin/sh-elf-$base"
           done
           git clone --depth 1 https://github.com/Jonimoose/libfxcg.git /tmp/libfxcg
           sed -i 's/-m3/-m4-nofpu -mb/g' /tmp/libfxcg/toolchain/prizm.bd || true
+          sed -i 's/-m4a-nofpu/-m4-nofpu -mb/g' /tmp/libfxcg/toolchain/prizm.bd || true
           make -C /tmp/libfxcg
 
       - name: G3A Dosyasini Derle
@@ -31,15 +33,9 @@ jobs:
           elif [ -f "jeodezi_g3a_main.c" ]; then
             cp jeodezi_g3a_main.c build_app/src/main.c
           fi
-          cat << 'EOF' > build_app/Makefile
-          export FXCGSDK = /tmp/libfxcg
-          APPNAME = JEODEZI
-          BUILDDIR = build
-          SRCDIR = src
-          LIBS = -lfxcg -lm -lc -lgcc
-          include $(FXCGSDK)/toolchain/prizm.bd
-          EOF
-          sed -i 's/^          //' build_app/Makefile
+          printf "export FXCGSDK = /tmp/libfxcg\nAPPNAME = JEODEZI\nBUILDDIR = build\nSRCDIR = src\nCFLAGS_EXTRA = -fno-builtin -Wno-unused-function\ninclude \$(FXCGSDK)/toolchain/prizm.bd\n" > build_app/Makefile
+          sed -i 's/-lgcc//g' /tmp/libfxcg/toolchain/prizm.bd || true
+          sed -i 's/-lc//g' /tmp/libfxcg/toolchain/prizm.bd || true
           make -C build_app
           cp build_app/*.g3a .
 
