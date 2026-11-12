@@ -105,7 +105,20 @@ jobs:
             -T"$LDSCRIPT" main.o compat.o -L"$LIBDIR" -lfxcg -lgcc \
             -o jeodezi.elf
 
-          sh3eb-elf-objcopy -R .comment -R .bss -O binary jeodezi.elf jeodezi.bin
+          echo "=== prizm.x ilk satirlar ==="
+          head -30 "$LDSCRIPT"
+          echo "=== jeodezi.elf bilgisi ==="
+          ls -la jeodezi.elf
+          file jeodezi.elf || true
+          head -c 32 jeodezi.elf | xxd || true
+
+          if sh3eb-elf-objcopy -R .comment -R .bss -O binary jeodezi.elf jeodezi.bin 2>/dev/null; then
+            echo "objcopy basarili (gercek ELF)"
+          else
+            echo "Dosya zaten ham binary, aynen kopyalaniyor"
+            cp jeodezi.elf jeodezi.bin
+          fi
+          ls -la jeodezi.bin
 
           mkg3a -n basic:JEODEZI -n internal:@JEODEZI jeodezi.bin JEODEZI.g3a
           ls -la *.g3a
